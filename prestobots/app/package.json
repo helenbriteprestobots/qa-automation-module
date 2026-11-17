@@ -1,0 +1,25 @@
+{
+  "name": "chatbot-testing-platform",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.10.0",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @ctp/server --filter @ctp/web dev",
+    "build": "pnpm --filter @ctp/web build",
+    "start": "pnpm build && pnpm --filter @ctp/server start",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ],
+    "ignoredBuiltDependencies": [
+      "protobufjs"
+    ]
+  }
+}
