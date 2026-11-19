@@ -12,3 +12,5 @@ export { ALLOWED_PROJECTS, GuardError, assertSafeTarget } from './stage/guard.ts
 export { StageChannel } from './stage/stageChannel.ts';
 export type { StageChannelConfig } from './stage/stageChannel.ts';
 export { STARTER_TEST_CASES } from './starterTestCases.ts';
+export { exploreBot, riskyReason } from './explore.ts';
+export type { ExploreOptions } from './explore.ts';

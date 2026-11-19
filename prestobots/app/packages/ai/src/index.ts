@@ -8,3 +8,5 @@ export { costUsd, isKnownModel } from './pricing.ts';
 export { transcriptToText } from './transcript.ts';
 export { JIRA_CARD_OUTPUT_SCHEMA, draftJiraCardText } from './jiraCard.ts';
 export type { JiraCardText } from './jiraCard.ts';
+export { PROPOSALS_OUTPUT_SCHEMA, buildProposalPrompt, estimateProposalCost, mapToText, proposeTestCases } from './proposing.ts';
+export type { Proposal, ProposalRequest } from './proposing.ts';

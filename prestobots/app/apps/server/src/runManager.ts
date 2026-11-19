@@ -45,6 +45,8 @@ const countResults = (results: TestResult[]): RunCounts => {
 export class RunManager {
   private active: { runId: string; controller: AbortController; done: Promise<void> } | null = null;
   private readonly events = new EventEmitter();
+  /** Returns a reason when something else is using the chatbot (e.g. "Generate test cases"). */
+  private blocker: () => string | null = () => null;
 
   constructor(
     private readonly store: Store,
@@ -54,6 +56,10 @@ export class RunManager {
     private readonly ai: () => RunAi | undefined = () => undefined
   ) {
     this.events.setMaxListeners(100);
+  }
+
+  setBlocker(blocker: () => string | null): void {
+    this.blocker = blocker;
   }
 
   activeRunId(): string | null {
@@ -120,6 +126,8 @@ export class RunManager {
     if (this.active) {
       throw new RunConflictError(`Run #${this.active.runId} is still in progress. Wait for it to finish or cancel it.`);
     }
+    const blocked = this.blocker();
+    if (blocked) throw new RunConflictError(blocked);
 
     const run: Run = {
       id: this.store.nextRunId(),

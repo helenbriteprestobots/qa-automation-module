@@ -21,7 +21,7 @@ export interface DraftRequest {
 
 const AREA_LINES = AREAS.map((area) => `- ${area}: ${AREA_LABELS[area]}`).join('\n');
 
-const DRAFT_SYSTEM = `You write automated test cases for the Cauce chatbot: a Spanish-language (Argentina) WhatsApp assistant that medical clinics use so patients can book, confirm or cancel appointments, ask questions, or reach a person.
+export const DRAFT_SYSTEM = `You write automated test cases for the Cauce chatbot: a Spanish-language (Argentina) WhatsApp assistant that medical clinics use so patients can book, confirm or cancel appointments, ask questions, or reach a person.
 
 A test case is a short patient story that a test runner plays against the bot, step by step. In each step the simulated patient does ONE action. The runner then waits for the bot's replies and evaluates that step's checks against those replies.
 

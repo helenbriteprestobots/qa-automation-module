@@ -6,6 +6,7 @@ import {
   type AiUsageBreakdown,
   type ChatMessage,
   type ChatbotMode,
+  type Generation,
   type JiraCard,
   type Run,
   type TestCase,
@@ -69,6 +70,12 @@ export class Store {
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS generations (
+        id INTEGER PRIMARY KEY,
+        status TEXT NOT NULL,
+        data TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS jira_cards (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         kind TEXT NOT NULL,
@@ -97,6 +104,38 @@ export class Store {
     this.db
       .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
       .run(key, value);
+  }
+
+  // ── "Generate test cases" jobs ─────────────────────────────────────────────
+
+  nextGenerationId(): string {
+    const row = this.db.prepare('SELECT COALESCE(MAX(id), 0) + 1 AS next FROM generations').get() as { next: number };
+    return String(row.next);
+  }
+
+  saveGeneration(generation: Generation): void {
+    this.db
+      .prepare(
+        `INSERT INTO generations (id, status, data, created_at) VALUES (@id, @status, @data, @createdAt)
+         ON CONFLICT(id) DO UPDATE SET status = @status, data = @data`
+      )
+      .run({ id: Number(generation.id), status: generation.status, data: JSON.stringify(generation), createdAt: generation.createdAt });
+  }
+
+  getGeneration(id: string): Generation | undefined {
+    const row = this.db.prepare('SELECT data FROM generations WHERE id = ?').get(Number(id)) as { data: string } | undefined;
+    return row ? (JSON.parse(row.data) as Generation) : undefined;
+  }
+
+  listGenerations(limit = 20): Generation[] {
+    const rows = this.db.prepare('SELECT data FROM generations ORDER BY id DESC LIMIT ?').all(limit) as Array<{ data: string }>;
+    return rows.map((row) => JSON.parse(row.data) as Generation);
+  }
+
+  /** AI cost of calls made since `at` (ISO date). */
+  aiSpendSince(at: string): number {
+    const row = this.db.prepare('SELECT COALESCE(SUM(cost_usd), 0) AS total FROM ai_usage WHERE at >= ?').get(at) as { total: number };
+    return row.total;
   }
 
   // ── Jira cards (only the link is kept: no status sync) ─────────────────────

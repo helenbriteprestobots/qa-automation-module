@@ -11,6 +11,7 @@ const PURPOSE_LABELS: Record<string, string> = {
   analyze_failure: 'Explaining failures',
   summarize_run: 'Run summaries',
   jira_card: 'Writing Jira cards',
+  generate_tests: 'Generating test cases',
 };
 
 export const SettingsPage = () => {

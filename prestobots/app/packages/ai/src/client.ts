@@ -5,7 +5,7 @@ import type { z } from 'zod/v4';
 import { type TokenUsage, costUsd } from './pricing.ts';
 
 /** What the platform uses Claude for. Shown in the spending breakdown. */
-export type AiPurpose = 'write_test' | 'judge' | 'analyze_failure' | 'summarize_run' | 'jira_card';
+export type AiPurpose = 'write_test' | 'judge' | 'analyze_failure' | 'summarize_run' | 'jira_card' | 'generate_tests';
 
 export interface UsageEntry extends TokenUsage {
   at: string;

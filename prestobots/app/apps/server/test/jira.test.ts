@@ -9,6 +9,7 @@ import { Store } from '../src/db.ts';
 import { toAdf } from '../src/jira/adf.ts';
 import { JiraClient, parseJiraSettings } from '../src/jira/client.ts';
 import { createJiraService } from '../src/jira/service.ts';
+import { GenerationManager } from '../src/generation/generationManager.ts';
 import { RunManager } from '../src/runManager.ts';
 
 describe('Jira text format', () => {
@@ -69,6 +70,8 @@ const aiFacade = (jiraText: AiFacade['jiraText']): AiFacade => ({
   },
   forRuns: () => undefined,
   jiraText,
+  estimateProposal: () => ({ lowUsd: 0, highUsd: 0 }),
+  propose: async () => ({ proposals: [], notes: [] }),
 });
 
 const aiOff: AiFacade['jiraText'] = async () => {
@@ -89,6 +92,7 @@ const setup = async (opts: { configured?: boolean; jiraText?: AiFacade['jiraText
     store,
     runs,
     ai,
+    generations: new GenerationManager(store, async () => new DemoChannel({ replyDelayMs: 1 }), 'demo', ai, runs),
     jira: createJiraService({
       store,
       ai,

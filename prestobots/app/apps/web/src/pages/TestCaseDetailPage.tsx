@@ -1,10 +1,12 @@
 import { AREA_LABELS } from '@ctp/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Archive, ArrowLeft, ExternalLink, Play, RotateCcw, Sparkles } from 'lucide-react';
+import { Archive, ArrowLeft, Check, ExternalLink, Play, RotateCcw, Sparkles, Wand2, X } from 'lucide-react';
+import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 
 import { api } from '../api';
-import { StatusPill } from '../components/StatusPill';
+import { ResultCard } from '../components/ResultCard';
+import { StatusPill, TrialBadge, trialHint } from '../components/StatusPill';
 import { StepsList } from '../components/StepsList';
 import { Button, Card, ErrorBox, Loading, PageTitle } from '../components/ui';
 import { formatDateTime } from '../format';
@@ -25,9 +27,12 @@ export const TestCaseDetailPage = () => {
     mutationFn: api.startRun,
     onSuccess: (run) => navigate(`/runs/${run.id}`),
   });
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState('');
   const setStatus = useMutation({
-    mutationFn: (status: 'active' | 'archived') => api.setTestCaseStatus(id, status),
+    mutationFn: (status: 'active' | 'archived' | 'rejected') => api.setTestCaseStatus(id, status, status === 'rejected' ? reason : undefined),
     onSuccess: () => {
+      setRejecting(false);
       void queryClient.invalidateQueries({ queryKey: ['test-case', id] });
       void queryClient.invalidateQueries({ queryKey: ['test-cases'] });
     },
@@ -36,7 +41,7 @@ export const TestCaseDetailPage = () => {
   if (detail.isLoading) return <Loading />;
   if (!detail.data) return <ErrorBox error={detail.error ?? 'Not found'} />;
 
-  const { testCase, history, jiraCards = [] } = detail.data;
+  const { testCase, history, jiraCards = [], proposalTrial } = detail.data;
 
   return (
     <>
@@ -65,11 +70,16 @@ export const TestCaseDetailPage = () => {
               <Sparkles className="h-4 w-4" aria-hidden /> Change with AI
             </Button>
             {testCase.status === 'proposed' && (
-              <Button variant="secondary" onClick={() => setStatus.mutate('active')} disabled={setStatus.isPending}>
-                Approve
-              </Button>
+              <>
+                <Button variant="secondary" onClick={() => setStatus.mutate('active')} disabled={setStatus.isPending}>
+                  <Check className="h-4 w-4" aria-hidden /> Approve
+                </Button>
+                <Button variant="secondary" onClick={() => setRejecting(true)} disabled={setStatus.isPending}>
+                  <X className="h-4 w-4" aria-hidden /> Reject
+                </Button>
+              </>
             )}
-            {testCase.status === 'archived' ? (
+            {testCase.status === 'archived' || testCase.status === 'rejected' ? (
               <Button variant="secondary" onClick={() => setStatus.mutate('active')} disabled={setStatus.isPending}>
                 <RotateCcw className="h-4 w-4" aria-hidden /> Activate
               </Button>
@@ -86,6 +96,47 @@ export const TestCaseDetailPage = () => {
       />
 
       <ErrorBox error={startRun.error ?? setStatus.error} />
+
+      {rejecting && (
+        <Card className="mb-6 flex flex-wrap items-center gap-2 px-5 py-4">
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why? (optional, helps the AI not propose it again)"
+            className="min-w-64 flex-1 rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+          />
+          <Button variant="danger" onClick={() => setStatus.mutate('rejected')} disabled={setStatus.isPending}>
+            Reject
+          </Button>
+          <Button variant="secondary" onClick={() => setRejecting(false)}>
+            Back
+          </Button>
+        </Card>
+      )}
+
+      {testCase.proposal && (
+        <Card className="mb-6 px-5 py-4">
+          <p className="flex items-center gap-2 text-sm font-semibold text-violet-900">
+            <Wand2 className="h-4 w-4" aria-hidden /> Proposed by the AI in{' '}
+            <Link to={`/generate/${testCase.proposal.generationId}`} className="underline">
+              generation #{testCase.proposal.generationId}
+            </Link>
+          </p>
+          <p className="mt-1 text-sm">{testCase.proposal.why}</p>
+          {testCase.proposal.rejectedReason && (
+            <p className="mt-1 text-sm text-slate-600">Rejected because: {testCase.proposal.rejectedReason}</p>
+          )}
+          {proposalTrial && (
+            <div className="mt-3 space-y-2">
+              <p className="flex flex-wrap items-center gap-2 text-sm">
+                <TrialBadge outcome={proposalTrial.outcome} />
+                <span className="text-slate-600">{trialHint(proposalTrial.outcome)} The first try is below.</span>
+              </p>
+              <ResultCard result={proposalTrial.result} trial />
+            </div>
+          )}
+        </Card>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="space-y-6 lg:col-span-2">

@@ -12,8 +12,12 @@ Runs on your computer. Plans and scope: [`../docs/06-mvp-scope.md`](../docs/06-m
   - AI explanations of failures and run summaries;
   - the monthly budget legend and Settings page.
 - **Iteration 3:** Jira cards from failed tests (new card, or a comment on an earlier one).
+- **Iteration 4:** "Generate test cases": the platform explores the bot's menus, the AI proposes
+  tests for what isn't covered, each one is tried twice, and you approve or reject them.
 
-**Not yet:** automatic test-case generation, WhatsApp forms.
+**Not yet:**
+- reading the Dialogflow agent file, which is waiting for the file from the developers;
+- WhatsApp forms.
 
 ## Start it
 
@@ -62,6 +66,31 @@ platform works the same, but writing tests with AI is disabled and AI-judge chec
 - At 80% the legend turns yellow.
 - At 100% AI features pause, and tests still run with their rule checks.
 - Also set a spend limit on the key itself in the Claude Console, as a hard stop.
+
+## Generate test cases
+
+**Test cases → Generate test cases** (needs the AI). The steps:
+
+1. **Explore.** The platform says "Hola" and taps through the menus, one new conversation per path:
+   - up to 3 taps deep and 25 paths;
+   - it never types;
+   - it never taps options that could book, confirm or cancel an appointment, pick an appointment
+     time, or hand the chat over to clinic staff. These options are listed as "not tapped", with the
+     reason.
+2. **Your OK.** You see what was found and the estimated AI cost. Nothing is paid before you click
+   **Continue**.
+3. **The AI proposes.** Proposals cover what existing tests don't, and never repeat a proposal you
+   rejected. In stage mode the AI also reads the WhatsApp booking form from the chatbot code
+   (`CHATBOT_REPO_DIR`, by default `../repos/prestobotsv3-main`), if that copy exists.
+4. **Each proposal is tried twice.** It is marked "Passed its trial", "Failed its trial" or
+   "Inconsistent".
+5. **You review** in **Test cases → To review**:
+   - **Approve:** it joins "Run all active".
+   - **Change with AI:** adjust it before approving.
+   - **Reject:** optionally say why. The AI won't propose it again.
+
+Runs and generation never use the chatbot at the same time, because both talk as the same test
+patient.
 
 ## Jira cards
 

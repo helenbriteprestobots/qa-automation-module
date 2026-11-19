@@ -32,6 +32,7 @@ const envSchema = z.object({
   AI_MODEL_AUTHOR: z.string().default('claude-opus-5-5'),
   AI_MODEL_JUDGE: z.string().default('claude-haiku-5-5'),
   AI_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(20),
+  CHATBOT_REPO_DIR: z.string().default('../repos/prestobotsv3-main'),
   JIRA_SITE: optional,
   JIRA_EMAIL: optional,
   JIRA_API_TOKEN: optional,
@@ -71,6 +72,8 @@ export const config = {
     models: { author: env.AI_MODEL_AUTHOR, judge: env.AI_MODEL_JUDGE },
     defaultBudgetUsd: env.AI_MONTHLY_BUDGET_USD,
   },
+  /** Local copy of the chatbot code, read only to find the WhatsApp booking form. Optional. */
+  chatbotRepoDir: resolve(APP_ROOT, env.CHATBOT_REPO_DIR),
   jira: {
     site: env.JIRA_SITE,
     email: env.JIRA_EMAIL,

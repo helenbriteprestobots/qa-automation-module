@@ -6,6 +6,7 @@ import { buildApp } from './app.ts';
 import { config, missingStageSettings } from './config.ts';
 import { Store } from './db.ts';
 import { JiraClient, parseJiraSettings } from './jira/client.ts';
+import { GenerationManager } from './generation/generationManager.ts';
 import { createJiraService } from './jira/service.ts';
 import { type ChannelFactory, RunManager } from './runManager.ts';
 
@@ -67,8 +68,17 @@ const jira = createJiraService({
 const runs = new RunManager(store, channelFactory, config.mode, defaultTarget, () => ai.forRuns());
 runs.recoverInterrupted();
 
+const generations = new GenerationManager(store, channelFactory, config.mode, ai, runs, {
+  chatbotRepoDir: config.chatbotRepoDir,
+});
+generations.recoverInterrupted();
+runs.setBlocker(() => {
+  const active = generations.activeId();
+  return active ? `"Generate test cases" (#${active}) is using the chatbot. Wait for it to finish or cancel it.` : null;
+});
+
 /** Checks the connection to salud-stage at most once a minute. */
-type BaseStatus = Omit<PlatformStatus, 'activeRunId' | 'ai' | 'jira'>;
+type BaseStatus = Omit<PlatformStatus, 'activeRunId' | 'activeGenerationId' | 'ai' | 'jira'>;
 let stageCheck: { at: number; status: BaseStatus } | null = null;
 
 const status = async (): Promise<BaseStatus> => {
@@ -111,6 +121,7 @@ const app = await buildApp({
   status,
   ai,
   jira,
+  generations,
   webDist: config.production ? config.webDist : undefined,
   logger: false,
 });
@@ -124,6 +135,8 @@ console.log(
 const shutdown = async (): Promise<void> => {
   const active = runs.activeRunId();
   if (active) runs.cancel(active);
+  const generation = generations.activeId();
+  if (generation) generations.cancel(generation);
   await app.close();
   store.close();
   process.exit(0);

@@ -1,6 +1,6 @@
 import { AREA_LABELS, type TestCaseStatus } from '@ctp/shared';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Play, Plus } from 'lucide-react';
+import { Play, Plus, Wand2 } from 'lucide-react';
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 
@@ -12,6 +12,7 @@ const FILTERS: Array<{ value: TestCaseStatus | 'all'; label: string }> = [
   { value: 'active', label: 'Active' },
   { value: 'proposed', label: 'To review' },
   { value: 'archived', label: 'Archived' },
+  { value: 'rejected', label: 'Rejected' },
   { value: 'all', label: 'All' },
 ];
 
@@ -33,6 +34,7 @@ export const TestCasesPage = () => {
   const all = testCases.data ?? [];
   const visible = filter === 'all' ? all : all.filter((testCase) => testCase.status === filter);
   const activeCount = all.filter((testCase) => testCase.status === 'active').length;
+  const toReview = all.filter((testCase) => testCase.status === 'proposed').length;
 
   const toggle = (id: string) =>
     setSelected((current) => {
@@ -49,6 +51,10 @@ export const TestCasesPage = () => {
         subtitle="Patient stories the platform plays against the chatbot. Each one has a permanent id."
         actions={
           <>
+            <Button variant="secondary" onClick={() => navigate('/generate')}>
+              <Wand2 className="h-4 w-4" aria-hidden />
+              Generate test cases
+            </Button>
             <Button variant="secondary" onClick={() => navigate('/test-cases/new')}>
               <Plus className="h-4 w-4" aria-hidden />
               New test case
@@ -82,6 +88,9 @@ export const TestCasesPage = () => {
             }`}
           >
             {option.label}
+            {option.value === 'proposed' && toReview > 0 && (
+              <span className="ml-1.5 rounded-full bg-violet-600 px-1.5 text-xs font-medium text-white">{toReview}</span>
+            )}
           </button>
         ))}
       </div>

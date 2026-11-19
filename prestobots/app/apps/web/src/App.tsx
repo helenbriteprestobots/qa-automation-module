@@ -4,6 +4,7 @@ import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 
 import { api } from './api';
 import { BudgetLegend } from './components/BudgetLegend';
+import { GeneratePage } from './pages/GeneratePage';
 import { RunDetailPage } from './pages/RunDetailPage';
 import { RunsPage } from './pages/RunsPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -37,6 +38,12 @@ export const App = () => {
             </NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
+            {status.data?.activeGenerationId && (
+              <Link to={`/generate/${status.data.activeGenerationId}`} className="flex items-center gap-1 text-violet-700 hover:underline">
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                Generating test cases
+              </Link>
+            )}
             {status.data?.activeRunId && (
               <Link to={`/runs/${status.data.activeRunId}`} className="flex items-center gap-1 text-sky-700 hover:underline">
                 <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
@@ -97,6 +104,8 @@ export const App = () => {
           <Route path="/test-cases/new" element={<TestCaseEditorPage />} />
           <Route path="/test-cases/:id" element={<TestCaseDetailPage />} />
           <Route path="/test-cases/:id/edit" element={<TestCaseEditorPage />} />
+          <Route path="/generate" element={<GeneratePage />} />
+          <Route path="/generate/:id" element={<GeneratePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/runs" element={<RunsPage />} />
           <Route path="/runs/:id" element={<RunDetailPage />} />

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type AiFacade, type RunAi, createAiFacade, currentMonth } from '../src/ai.ts';
 import { buildApp } from '../src/app.ts';
+import { GenerationManager } from '../src/generation/generationManager.ts';
 import { createJiraService } from '../src/jira/service.ts';
 import { Store } from '../src/db.ts';
 import { RunManager, TRIAL_TEST_CASE_ID } from '../src/runManager.ts';
@@ -55,6 +56,8 @@ const fakeFacade = (runAi?: RunAi): AiFacade => ({
   jiraText: async () => {
     throw new AiError('AI is off');
   },
+  estimateProposal: () => ({ lowUsd: 0.01, highUsd: 0.05 }),
+  propose: async () => ({ proposals: [], notes: [] }),
 });
 
 let store: Store;
@@ -67,6 +70,7 @@ const setup = async (runAi?: RunAi, facade: AiFacade = fakeFacade(runAi)) => {
     store,
     runs,
     ai: facade,
+    generations: new GenerationManager(store, async () => new DemoChannel({ replyDelayMs: 1 }), 'demo', facade, runs),
     jira: createJiraService({
       store,
       ai: facade,

@@ -14,7 +14,8 @@ export const AREA_LABELS: Record<Area, string> = {
   FALLBACK: 'Messages the bot does not understand',
 };
 
-export const TEST_CASE_STATUSES = ['proposed', 'active', 'archived'] as const;
+/** proposed → waiting for an admin; rejected → an admin said no (the AI won't propose it again). */
+export const TEST_CASE_STATUSES = ['proposed', 'active', 'archived', 'rejected'] as const;
 export type TestCaseStatus = (typeof TEST_CASE_STATUSES)[number];
 
 /** Where a test case came from. */
@@ -65,6 +66,15 @@ export const testCaseSchema = z.object({
   status: z.enum(TEST_CASE_STATUSES),
   origin: z.enum(TEST_CASE_ORIGINS),
   steps: z.array(stepSchema).min(1),
+  /** Only for test cases proposed by "Generate test cases". */
+  proposal: z
+    .object({
+      generationId: z.string(),
+      /** Why the AI proposed it: what it covers that wasn't tested. */
+      why: z.string(),
+      rejectedReason: z.string().optional(),
+    })
+    .optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

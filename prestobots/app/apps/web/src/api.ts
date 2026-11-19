@@ -1,6 +1,8 @@
 import type {
   AiStatus,
   AiUsageBreakdown,
+  Generation,
+  ProposalTrial,
   JiraCard,
   JiraCardDraft,
   JiraCardInput,
@@ -22,7 +24,15 @@ export interface TestCaseDetail {
   testCase: TestCase;
   history: Array<Pick<TestResult, 'id' | 'runId' | 'status' | 'finishedAt' | 'error'>>;
   jiraCards: JiraCard[];
+  /** For proposals: how the proposal behaved when it was tried. */
+  proposalTrial: ProposalTrial | null;
 }
+
+/** A generation in the list: without the menu map and the conversations. */
+export type GenerationRow = Omit<Generation, 'map' | 'trials'> & {
+  paths: number;
+  trials: Array<Omit<ProposalTrial, 'result'>>;
+};
 
 export interface RunDetail {
   run: Run;
@@ -48,8 +58,8 @@ export const api = {
   status: () => request<PlatformStatus>('/api/status'),
   testCases: () => request<TestCaseRow[]>('/api/test-cases'),
   testCase: (id: string) => request<TestCaseDetail>(`/api/test-cases/${id}`),
-  setTestCaseStatus: (id: string, status: TestCaseStatus) =>
-    request<TestCase>(`/api/test-cases/${id}`, { method: 'PATCH', body: { status } }),
+  setTestCaseStatus: (id: string, status: TestCaseStatus, reason?: string) =>
+    request<TestCase>(`/api/test-cases/${id}`, { method: 'PATCH', body: { status, reason } }),
   runs: () => request<Run[]>('/api/runs'),
   run: (id: string) => request<RunDetail>(`/api/runs/${id}`),
   startRun: (body: { testCaseIds?: string[]; allActive?: boolean }) =>
@@ -64,6 +74,11 @@ export const api = {
     request<TestCase>('/api/test-cases', { method: 'POST', body: { draft, status } }),
   updateTestCase: (id: string, draft: TestCaseDraft) =>
     request<TestCase>(`/api/test-cases/${id}`, { method: 'PUT', body: { draft } }),
+  generations: () => request<GenerationRow[]>('/api/generations'),
+  generation: (id: string) => request<Generation>(`/api/generations/${id}`),
+  startGeneration: () => request<Generation>('/api/generations', { method: 'POST', body: {} }),
+  confirmGeneration: (id: string) => request<Generation>(`/api/generations/${id}/confirm`, { method: 'POST', body: {} }),
+  cancelGeneration: (id: string) => request<Generation>(`/api/generations/${id}/cancel`, { method: 'POST', body: {} }),
   jiraCheck: () =>
     request<{ user: string; projectName: string; issueTypes: Record<JiraIssueType, string | null> }>('/api/jira/check', {
       method: 'POST',

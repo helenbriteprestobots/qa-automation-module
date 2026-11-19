@@ -16,6 +16,7 @@ import { z } from 'zod';
 
 import type { AiFacade } from './ai.ts';
 import type { Store } from './db.ts';
+import { GenerationConflictError, GenerationInputError, type GenerationManager } from './generation/generationManager.ts';
 import { JiraError, JiraInputError, type JiraService } from './jira/service.ts';
 import { RunConflictError, RunInputError, type RunManager } from './runManager.ts';
 
@@ -23,20 +24,24 @@ export interface AppDeps {
   store: Store;
   runs: RunManager;
   /** Computes the platform status shown in the page header. */
-  status: () => Promise<Omit<PlatformStatus, 'activeRunId' | 'ai' | 'jira'>>;
+  status: () => Promise<Omit<PlatformStatus, 'activeRunId' | 'activeGenerationId' | 'ai' | 'jira'>>;
   ai: AiFacade;
   jira: JiraService;
+  generations: GenerationManager;
   /** Folder with the built web page, served in production. */
   webDist?: string;
   logger?: boolean;
 }
 
 export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
-  const { store, runs, ai, jira } = deps;
+  const { store, runs, ai, jira, generations } = deps;
   const app = Fastify({ logger: deps.logger ?? false });
 
   app.setErrorHandler((error, _request, reply) => {
-    if (error instanceof RunConflictError) return reply.code(409).send({ error: error.message });
+    if (error instanceof RunConflictError || error instanceof GenerationConflictError) {
+      return reply.code(409).send({ error: error.message });
+    }
+    if (error instanceof GenerationInputError) return reply.code(400).send({ error: error.message });
     if (error instanceof AiError || error instanceof BudgetExceededError) {
       return reply.code(400).send({ error: error.message });
     }
@@ -52,6 +57,7 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
   app.get('/api/status', async (): Promise<PlatformStatus> => ({
     ...(await deps.status()),
     activeRunId: runs.activeRunId(),
+    activeGenerationId: generations.activeId(),
     ai: ai.status(),
     jira: jira.status(),
   }));
@@ -77,7 +83,10 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     const { id } = request.params as { id: string };
     const testCase = store.getTestCase(id);
     if (!testCase) return reply.code(404).send({ error: `Test case ${id} does not exist.` });
-    return { testCase, history: store.historyOf(id), jiraCards: store.jiraCardsForTestCase(id) };
+    const proposalTrial = testCase.proposal
+      ? store.getGeneration(testCase.proposal.generationId)?.trials.find((trial) => trial.testCaseId === id)
+      : undefined;
+    return { testCase, history: store.historyOf(id), jiraCards: store.jiraCardsForTestCase(id), proposalTrial: proposalTrial ?? null };
   });
 
   /** The AI writes a new test case, or changes an existing one / a draft, from the admin's words. */
@@ -144,10 +153,16 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
 
   app.patch('/api/test-cases/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { status } = z.object({ status: z.enum(TEST_CASE_STATUSES) }).parse(request.body);
+    const { status, reason } = z
+      .object({ status: z.enum(TEST_CASE_STATUSES), reason: z.string().trim().max(500).optional() })
+      .parse(request.body);
     const testCase = store.getTestCase(id);
     if (!testCase) return reply.code(404).send({ error: `Test case ${id} does not exist.` });
-    const updated = { ...testCase, status, updatedAt: new Date().toISOString() };
+    const updated: TestCase = { ...testCase, status, updatedAt: new Date().toISOString() };
+    // The reason helps the AI not propose the same thing again.
+    if (status === 'rejected' && testCase.proposal) {
+      updated.proposal = { ...testCase.proposal, rejectedReason: reason || undefined };
+    }
     store.saveTestCase(updated);
     return updated;
   });
@@ -204,6 +219,36 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
       clearInterval(heartbeat);
       unsubscribe();
     });
+  });
+
+  // ── Generate test cases ────────────────────────────────────────────────────
+
+  /** List without the bulky parts (menu map, conversations). */
+  app.get('/api/generations', async () =>
+    store.listGenerations().map(({ map, trials, ...rest }) => ({
+      ...rest,
+      paths: map?.nodes.length ?? 0,
+      trials: trials.map(({ result: _result, ...trial }) => trial),
+    }))
+  );
+
+  app.post('/api/generations', async (_request, reply) => reply.code(201).send(generations.start()));
+
+  app.get('/api/generations/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const generation = store.getGeneration(id);
+    if (!generation) return reply.code(404).send({ error: `Generation #${id} does not exist.` });
+    return generation;
+  });
+
+  app.post('/api/generations/:id/confirm', async (request) => {
+    const { id } = request.params as { id: string };
+    return generations.confirm(id);
+  });
+
+  app.post('/api/generations/:id/cancel', async (request) => {
+    const { id } = request.params as { id: string };
+    return generations.cancel(id);
   });
 
   // ── Jira cards ─────────────────────────────────────────────────────────────

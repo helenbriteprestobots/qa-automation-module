@@ -1,4 +1,5 @@
 export * from './chat.ts';
+export * from './generation.ts';
 export * from './jira.ts';
 export * from './run.ts';
 export * from './testCase.ts';
@@ -16,6 +17,8 @@ export interface PlatformStatus {
   /** Plain-words notes that don't block runs. */
   notes: string[];
   activeRunId: string | null;
+  /** "Generate test cases" job that is using the chatbot right now. */
+  activeGenerationId: string | null;
   ai: AiStatus;
   jira: JiraStatus;
 }

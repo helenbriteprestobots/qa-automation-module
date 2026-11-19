@@ -5,7 +5,12 @@ import {
   BudgetExceededError,
   analyzeFailure,
   type JiraCardText,
+  type Proposal,
+  type ProposalRequest,
+  buildProposalPrompt,
   createJudge,
+  estimateProposalCost,
+  proposeTestCases,
   draftJiraCardText,
   draftTestCase,
   summarizeRun,
@@ -43,6 +48,10 @@ export interface AiFacade {
   forRuns(): RunAi | undefined;
   /** Title, problem paragraph and card type for a Jira card. Throws AiError when the AI is off. */
   jiraText(input: { mode: ChatbotMode; testCase: TestCase; result: TestResult }): Promise<JiraCardText>;
+  /** Estimated cost range of `propose`, shown before it runs. */
+  estimateProposal(request: ProposalRequest): { lowUsd: number; highUsd: number };
+  /** New test cases for what isn't tested yet. Throws AiError when the AI is off. */
+  propose(request: ProposalRequest, signal?: AbortSignal): Promise<{ proposals: Proposal[]; notes: string[] }>;
 }
 
 const BUDGET_KEY = 'ai_monthly_budget_usd';
@@ -115,5 +124,9 @@ export const createAiFacade = (options: {
     forRuns: () => runAi,
 
     jiraText: (input) => draftJiraCardText(requireClient(), input),
+
+    estimateProposal: (request) => estimateProposalCost(models.author, buildProposalPrompt(request)),
+
+    propose: (request, signal) => proposeTestCases(requireClient(), request, signal),
   };
 };
