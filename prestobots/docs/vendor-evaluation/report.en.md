@@ -1,0 +1,149 @@
+# Why we don't use an off-the-shelf AI testing tool for the Cauce chatbot
+
+> Evaluation of **Cekura**, **TestSprite** and **Momentic** for end-to-end testing of the Cauce
+> WhatsApp chatbot (repo `prestobotsv3`, product Salud).
+> Date: 2026-11-19. Based on our trials and on each vendor's public documentation as of this date.
+
+---
+
+## 1. Summary
+
+These tools test **what a product shows or says**. The risk in our chatbot is **what it does
+behind the scenes**: whether the appointment really ends up in Macena and in our database.
+
+None of the three tools can check that without us building the hard part ourselves: sending
+messages through the bot's real channel, reading its replies from Firestore, and verifying the
+booking in Macena. Once we build that, the tool adds little on top, and it adds cost, vendor
+lock-in, and patient data leaving our systems.
+
+This isn't a criticism of the tools. They are good at what they're designed for. Our product just
+has a different shape.
+
+| Tool           | Designed for                                   | Main gap for our bot                                                                                |
+| -------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **Momentic**   | Clicking through web pages and mobile apps     | The bot has no screen to click. No WhatsApp support.                                                |
+| **TestSprite** | Web UIs and REST APIs that answer each request | Our webhook always answers "received", so every test would look like a pass.                        |
+| **Cekura**     | Conversations with voice and chat agents       | It judges what the bot _says_, not what it _does_. No buttons, lists or WhatsApp Flows in its docs. |
+
+---
+
+## 2. What testing our chatbot requires
+
+The Cauce chatbot doesn't live on a web page. A patient writes on WhatsApp, the message travels
+through **Gupshup** to our servers, **Dialogflow CX** interprets it, and the bot books the
+appointment in **Macena** (the clinics' booking system).
+
+To test one booking from start to finish, a test must:
+
+1. **Send a message as a patient.** It goes through the Gupshup webhook (the address where the bot
+   receives WhatsApp messages) or as a real WhatsApp message.
+2. **Get the bot's reply.** The webhook only answers "received". The bot works in the background
+   and saves its reply in **Firestore**, so the test has to read the database to see it.
+3. **Handle WhatsApp's formats.** The bot answers with buttons, lists, and **WhatsApp Flows** (the
+   in-chat booking forms).
+4. **Check what actually happened.** Was the appointment created in Macena? Was it saved in
+   Firestore?
+5. **Judge the replies in Spanish.** Replies are natural language, so exact text matching breaks
+   too easily. An AI judge has to grade them.
+
+Points 2 and 4 are where most of the risk is, and no tool covers them.
+
+---
+
+## 3. Tool by tool
+
+### 3.1 Momentic — built for clicking through web pages and mobile apps
+
+- It drives Chromium browsers, iOS simulators and Android emulators. Its AI features (selectors
+  that repair themselves, visual checks) need a screen to click. **The bot has no screen.**
+- It has **no WhatsApp or chatbot support**. Its SMS inbox isn't WhatsApp.
+- It _can_ be forced to work: an HTTP step posts to the webhook and a JavaScript step reads
+  Firestore. But then we'd be writing our own test harness inside someone else's sandbox, paying
+  for AI features we don't use.
+
+**Verdict:** wrong kind of tool for the bot. It could be considered later for the admin dashboard
+or the marketing landing page, which do have screens.
+
+### 3.2 TestSprite — built for web UIs and REST APIs
+
+- Its backend tests call an endpoint and check the response. Our webhook always returns
+  "200 received", whatever the bot does afterwards. **TestSprite would mark every test as passed,
+  even when the bot answered nonsense or didn't answer at all.**
+- Its documentation doesn't mention asynchronous or event-driven flows, database checks, or
+  chatbots.
+- It writes test cases by reading the code and the app's URL. For us it would propose tests for
+  the API endpoints, not patient conversations based on the Dialogflow CX agent.
+- When we reviewed it, its GitHub integration only re-ran existing tests. It didn't write new ones
+  when the code changed.
+
+**Verdict:** its request → response model doesn't fit a bot that answers asynchronously through
+another channel.
+
+### 3.3 Cekura — the closest fit, but it judges words, not results
+
+Cekura is built for conversational agents. It has WhatsApp text testing, simulated users, and
+AI-graded metrics. It's the only one of the three that understands "conversations". Even so:
+
+- **It needs a real WhatsApp line.** It sends real WhatsApp messages from its own number to the
+  bot's number (its setup guide asks for Twilio credentials). Our stage bot would need a real
+  number reachable from outside, and WhatsApp's 24-hour messaging window applies.
+- **Text only.** Its WhatsApp docs only describe text. They don't mention buttons, lists or Flows,
+  and the Cauce booking path depends on them.
+- **It doesn't check results.** It grades the conversation transcript, and its docs show no way to
+  check Firestore or Macena. **A bot that says "your appointment is confirmed" without creating it
+  in Macena would pass.** That is the worst bug this bot can have.
+- **Scenarios are written by hand.** Test cases are prompts that someone writes. It doesn't find
+  them in the Dialogflow CX agent or in the Flow files.
+- **The workaround is most of the work.** It can connect through a WebSocket address that we
+  host. But we'd have to build a bridge between Cekura, the Gupshup webhook and Firestore, which is
+  most of the work of testing the bot anyway.
+
+**Verdict:** useful for judging conversation quality, but blind to whether the booking really
+happened.
+
+---
+
+## 4. Problems shared by all three
+
+- **Patient data leaves our systems.** Test conversations include health data and would be stored
+  by a third-party SaaS.
+- **They can't tell our bugs from other people's outages.** None of them distinguishes a failure
+  in our bot from Gupshup being slow or Macena's test system being down. Every outage would look
+  like a bot bug.
+- **Lock-in and cost.** Tests live on the vendor's platform, and we pay per seat or per run.
+- **The hard part still falls on us.** The channel integration, reading Firestore, and verifying
+  Macena have to be built by us in every case.
+
+---
+
+## 5. What we're doing instead
+
+We're building our own testing platform on proven open-source pieces
+(see [04-e2e-testing-strategy.md](../04-e2e-testing-strategy.md) and
+[06-mvp-scope.md](../06-mvp-scope.md)):
+
+- A runner that **plays the patient** by sending messages to the real webhook on **salud-stage**
+  (never production).
+- **Reads the bot's replies** from Firestore with read-only access.
+- **Checks the booking** in Macena's test system.
+- An **AI judge (Claude)** grades the Spanish replies, but it can never turn a failed check into a
+  pass.
+- **Test cases are proposed automatically** from the Dialogflow CX agent and the Flow files, and
+  approved by an admin.
+- Failures become **Jira cards**.
+
+The **pass/fail decision rests on yes/no checks** (did the reply arrive, are the right buttons
+there, does the appointment exist). The AI only grades what can't be checked exactly.
+
+---
+
+## Sources
+
+- Cekura — [WhatsApp testing](https://docs.cekura.ai/documentation/guides/testing-agents/whatsapp-testing),
+  [Agent setup guide](https://docs.cekura.ai/documentation/key-concepts/agents/Agent_Setup_Guide),
+  [Chat testing](https://docs.cekura.ai/documentation/integrations/chat-testing),
+  [Blog: chat agent QA](https://www.cekura.ai/blogs/cekura-chat-agent-quality-assurance-that-helps-you-ship-with-confidence)
+- Momentic — [Documentation index](https://momentic.ai/docs/llms.txt),
+  [Network requests](https://momentic.ai/docs/guides/page-interactions/network-requests.md)
+- TestSprite — [Documentation index](https://docs.testsprite.com/llms.txt),
+  [Backend testing](https://docs.testsprite.com/backend)

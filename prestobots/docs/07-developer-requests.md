@@ -98,7 +98,7 @@ These are for later iterations. Mention them only if the conversation goes there
 
 | What | Why | Exists today? |
 | --- | --- | --- |
-| Read access to the bot's conversation design (Dialogflow CX, role **Dialogflow API Reader**) | So the AI can propose test cases from everything the bot knows | ✅ Yes, it's just a permission |
+| A copy of the **exported agent file** of Dialogflow CX "Cauce V3" (the ZIP they use to set up each clinic, e.g. `exported_agent_Cauce V3.zip`), exported in **JSON package** format | So the AI can propose test cases for what patients *type*, not only for the menus the platform finds by itself. One file, no permissions to grant. Ask them to make sure it carries no webhook passwords or keys (an agent export can include webhook settings) before sending it privately. | ✅ Yes, they already have it |
 | Is the `appointments` data enough to confirm a booking, or do we need Macena's test system? | Checking that bookings and cancellations really happened | ✅ Yes, just a question |
 | A way for tests to fill in the WhatsApp **forms** (booking form) | Each form uses a one-time key that only WhatsApp gets, and the bot doesn't keep a copy | ❌ No, it would be new work. Ask only whether it's feasible. |
 | A way to trigger **reminder** messages for tests | Reminders come from scheduled jobs. The platform only reads, so it can't create them. | ❌ Not without their scripts or new work |

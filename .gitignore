@@ -1,0 +1,40 @@
+# ── Dependencies and build output ──────────────────────────────────────────
+node_modules/
+dist/
+*.tsbuildinfo
+.vite/
+coverage/
+
+# ── Copies of the company's repos (reviewed locally, not ours to publish) ──
+prestobots/repos/
+
+# ── Secrets and local settings: never commit ───────────────────────────────
+.env
+.env.*
+!.env.example
+secrets/
+*.pem
+*.key
+*service-account*.json
+*-sa.json
+
+# ── Local data (test runs, conversations, AI usage) ─────────────────────────
+prestobots/app/data/
+*.db
+*.db-*
+*.sqlite
+
+# ── Stray files at the root (empty npm project created by accident) ────────
+/package.json
+/package-lock.json
+
+# ── Logs, OS and editor files ──────────────────────────────────────────────
+*.log
+npm-debug.log*
+pnpm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
