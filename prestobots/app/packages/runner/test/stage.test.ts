@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { normalizeFirestoreMessage } from '../src/stage/firestoreMessages.ts';
-import { assertSafeTarget, GuardError } from '../src/stage/guard.ts';
+import { GuardError, assertSafeAccount, assertSafeTarget, assertStageAccess } from '../src/stage/guard.ts';
 import { buildGupshupInbound } from '../src/stage/gupshupPayload.ts';
 
 const base = { appName: 'qa-app', phone: '5492610000000', name: 'QA Paciente', now: 1_700_000_000_000 };
@@ -86,10 +86,9 @@ describe('normalizeFirestoreMessage', () => {
   });
 });
 
-describe('assertSafeTarget', () => {
+describe('assertSafeTarget (FR-9)', () => {
   const ok = {
     projectId: 'salud-stage',
-    credentialsProjectId: 'salud-stage',
     webhookUrl: 'https://us-central1-salud-stage.cloudfunctions.net/webhookGupshupMessages',
     orgId: 'qa-org',
   };
@@ -99,13 +98,41 @@ describe('assertSafeTarget', () => {
   });
 
   it.each([
-    ['production project', { projectId: 'salud-prod', credentialsProjectId: 'salud-prod' }],
-    ['key from another project', { credentialsProjectId: 'salud-prod' }],
+    ['production project', { projectId: 'salud-prod' }],
     ['production webhook', { webhookUrl: 'https://us-central1-salud-prod.cloudfunctions.net/webhookGupshupMessages' }],
     ['non-Google host', { webhookUrl: 'https://example.com/webhook' }],
     ['plain http', { webhookUrl: 'http://us-central1-salud-stage.cloudfunctions.net/x' }],
     ['missing clinic', { orgId: ' ' }],
   ])('refuses a %s', (_label, change) => {
     expect(() => assertSafeTarget({ ...ok, ...change })).toThrow(GuardError);
+  });
+});
+
+describe('assertSafeAccount (FR-9)', () => {
+  it('requires a Google sign-in', () => {
+    expect(() => assertSafeAccount(undefined)).toThrow(/Sign in with Google/);
+  });
+
+  it('refuses accounts outside prestobots.com', () => {
+    expect(() => assertSafeAccount('juan@gmail.com')).toThrow(GuardError);
+    expect(() => assertSafeAccount('juan@prestobots.com.evil.test')).toThrow(GuardError);
+  });
+
+  it('accepts prestobots.com in any letter case', () => {
+    expect(() => assertSafeAccount('Juan@PrestoBots.com')).not.toThrow();
+  });
+});
+
+describe('assertStageAccess (FR-9)', () => {
+  const target = {
+    projectId: 'salud-prod',
+    webhookUrl: 'https://us-central1-salud-stage.cloudfunctions.net/webhookGupshupMessages',
+    orgId: 'qa-org',
+  };
+
+  it('checks the account first, then the target', () => {
+    expect(() => assertStageAccess(target, undefined)).toThrow(/Sign in with Google/);
+    expect(() => assertStageAccess(target, 'juan@prestobots.com')).toThrow(/salud-prod/);
+    expect(() => assertStageAccess({ ...target, projectId: 'salud-stage' }, 'juan@prestobots.com')).not.toThrow();
   });
 });

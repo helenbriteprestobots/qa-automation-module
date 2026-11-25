@@ -1,4 +1,4 @@
-import { DemoChannel, STARTER_TEST_CASES } from '@ctp/runner';
+import { type ChannelSession, DemoChannel, STARTER_TEST_CASES, SignInExpiredError } from '@ctp/runner';
 import { AiError } from '@ctp/ai';
 import type { AiStatus, Run, TestCase, TestCaseDraft, TestResult } from '@ctp/shared';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -236,5 +236,53 @@ describe('AI budget', () => {
     facade.setBudget(8);
     expect(facade.status().budget.level).toBe('exhausted');
     expect(facade.breakdown().byPurpose[0]).toMatchObject({ purpose: 'judge', calls: 2 });
+  });
+});
+
+describe('Google sign-in expiry during runs (FR-11)', () => {
+  const EXPIRED = 'Your Google sign-in expired. Sign in again in Settings.';
+
+  /** A demo channel that reports an expired sign-in once the first test has finished. */
+  class ExpiringChannel extends DemoChannel {
+    sessions = 0;
+    override async openSession(): Promise<ChannelSession> {
+      this.sessions += 1;
+      return super.openSession();
+    }
+    fatal(): string | undefined {
+      return this.sessions >= 1 ? EXPIRED : undefined;
+    }
+  }
+
+  it('stops the run after the current test and skips the rest with the reason', async () => {
+    const channel = new ExpiringChannel({ replyDelayMs: 1 });
+    const expiringRuns = new RunManager(store, async () => channel, 'stage', 'salud-stage');
+    const run = expiringRuns.start(['SAL-GREET-001', 'SAL-CANCEL-002']);
+    await expiringRuns.whenIdle();
+
+    const results = store.listResults(run.id);
+    expect(results[0]?.status).toBe('passed');
+    expect(results[1]).toMatchObject({ status: 'skipped', error: EXPIRED });
+    expect(store.getRun(run.id)?.status).toBe('finished');
+    expect(channel.sessions).toBe(1);
+  });
+
+  it('fails every test before sending anything when the sign-in already expired', async () => {
+    let opened = 0;
+    const expiredRuns = new RunManager(
+      store,
+      async () => {
+        opened += 1;
+        throw new SignInExpiredError();
+      },
+      'stage',
+      'salud-stage'
+    );
+    const run = expiredRuns.start(['SAL-GREET-001', 'SAL-CANCEL-002']);
+    await expiredRuns.whenIdle();
+    const results = store.listResults(run.id);
+    expect(results.map((r) => r.status)).toEqual(['error', 'error']);
+    expect(results[0]?.error).toBe(`Could not connect to the chatbot: ${EXPIRED}`);
+    expect(opened).toBe(1);
   });
 });

@@ -44,6 +44,8 @@ const outcomeOf = (statuses: string[]): TrialOutcome => {
  */
 export class GenerationManager {
   private active: { id: string; controller: AbortController; done: Promise<void> } | null = null;
+  /** Returns a reason when something else is using the chatbot (e.g. a test message). */
+  private blocker: () => string | null = () => null;
 
   constructor(
     private readonly store: Store,
@@ -53,6 +55,10 @@ export class GenerationManager {
     private readonly runs: RunManager,
     private readonly options: GenerationOptions = {}
   ) {}
+
+  setBlocker(blocker: () => string | null): void {
+    this.blocker = blocker;
+  }
 
   /** The job currently using the chatbot or the AI, if any. */
   activeId(): string | null {
@@ -297,6 +303,8 @@ export class GenerationManager {
     if (this.active) throw new GenerationConflictError('Another "Generate test cases" is in progress. Wait for it or cancel it.');
     const run = this.runs.activeRunId();
     if (run) throw new GenerationConflictError(`Run #${run} is in progress. Wait for it to finish: both use the same test patient.`);
+    const blocked = this.blocker();
+    if (blocked) throw new GenerationConflictError(blocked);
   }
 
   private assertAiReady(): void {

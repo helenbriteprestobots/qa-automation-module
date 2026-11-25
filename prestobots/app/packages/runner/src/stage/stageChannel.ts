@@ -1,28 +1,25 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-
-import type { ChatMessage, StepAction } from '@ctp/shared';
-import { type App, cert, deleteApp, initializeApp } from 'firebase-admin/app';
-import { FieldPath, type Firestore, getFirestore } from 'firebase-admin/firestore';
+import type { ChatMessage, GoogleSession, StepAction } from '@ctp/shared';
 
 import { type ChannelSession, type ChatChannel, StepError, resolveOption } from '../channels/types.ts';
 import { sleep } from '../text.ts';
+import { FirestoreRest } from './firestoreRest.ts';
+import { type AccessTokenProvider, SignInExpiredError, createAccessTokenProvider } from './googleToken.ts';
 import { type InboundMessage, buildGupshupInbound } from './gupshupPayload.ts';
 import { normalizeFirestoreMessage } from './firestoreMessages.ts';
-import { assertSafeTarget } from './guard.ts';
+import { assertStageAccess } from './guard.ts';
 
 /**
  * Talks to the real Cauce chatbot on salud-stage, exactly the way WhatsApp does:
  *
  *   fake Gupshup message ──POST──▶ webhookGupshupMessages ─▶ Pub/Sub ─▶ handler ─▶ engine
- *   reply ◀── read (read-only) ── Firestore conversations/{id}/messages
+ *   reply ◀── read (read-only, as the signed-in admin) ── Firestore conversations/{id}/messages
  *
- * Needs only READ access to Firestore. Never writes to the chatbot's database.
+ * Reads Firestore through its REST API with the admin's Google sign-in. Never writes to the
+ * chatbot's database.
  */
 
 export interface StageChannelConfig {
   projectId: string;
-  serviceAccountFile: string;
   orgId: string;
   webhookUrl: string;
   patientPhone: string;
@@ -34,116 +31,120 @@ export interface StageChannelConfig {
   /** After the last reply, how long without new messages before we consider the bot done. */
   quietMs?: number;
   pollMs?: number;
+  /** The OAuth client and the admin's saved Google sign-in (undefined when not signed in). */
+  google: { clientId: string; clientSecret: string; session: GoogleSession | undefined };
+  /** False once the admin signed out, so a run in progress stops (FR-11). */
+  isSignedIn?: () => boolean;
+  /** For tests: replaces `fetch` for Google and the webhook. */
+  fetch?: typeof fetch;
+  now?: () => number;
 }
 
 const WHATSAPP_CHANNEL = 'wsp';
 const SIX_MONTHS_MS = 6 * 30 * 24 * 60 * 60 * 1000;
 /** Margin for clock differences between this computer and Google's servers. */
 const CLOCK_SKEW_MS = 30_000;
+const EXPIRED_MESSAGE = new SignInExpiredError().message;
 
 export class StageChannel implements ChatChannel {
   readonly mode = 'stage' as const;
+  target: string;
+  private appName = '';
 
   private constructor(
     private readonly config: StageChannelConfig,
-    private readonly app: App,
-    private readonly db: Firestore,
-    private readonly appName: string,
-    readonly target: string
-  ) {}
+    private readonly firestore: FirestoreRest,
+    private readonly tokens: AccessTokenProvider
+  ) {
+    this.target = `${config.projectId} · ${config.orgId}`;
+  }
 
-  /** Validates the configuration, connects read-only to Firestore and reads the QA clinic. */
+  /** Checks every safety rule, then connects read-only to salud-stage and reads the QA clinic. */
   static async create(config: StageChannelConfig): Promise<StageChannel> {
-    let credentials: { project_id?: string; client_email?: string; private_key?: string };
-    try {
-      credentials = JSON.parse(readFileSync(config.serviceAccountFile, 'utf8'));
-    } catch {
-      throw new StepError(
-        `Could not read the salud-stage key file at «${config.serviceAccountFile}».`
-      );
-    }
-
-    assertSafeTarget({
-      projectId: config.projectId,
-      credentialsProjectId: credentials.project_id,
-      webhookUrl: config.webhookUrl,
-      orgId: config.orgId,
-    });
+    const session = config.google.session;
+    assertStageAccess(
+      { projectId: config.projectId, webhookUrl: config.webhookUrl, orgId: config.orgId },
+      session?.email
+    );
+    if (!session) throw new StepError('Not signed in. Sign in with Google in Settings to use the real bot.');
 
     if (!/^\d{10,15}$/.test(config.patientPhone)) {
-      throw new StepError(
-        'The test patient phone must be digits only, with country code (e.g. 549261…).'
-      );
+      throw new StepError('The test patient phone must be digits only, with country code (e.g. 549261…).');
     }
 
-    const app = initializeApp(
-      {
-        credential: cert({
-          projectId: credentials.project_id,
-          clientEmail: credentials.client_email,
-          privateKey: credentials.private_key,
-        }),
-        projectId: config.projectId,
-      },
-      `ctp-stage-${randomUUID()}`
-    );
-    const db = getFirestore(app);
+    const tokens = createAccessTokenProvider({
+      clientId: config.google.clientId,
+      clientSecret: config.google.clientSecret,
+      refreshToken: session.refreshToken,
+      projectId: config.projectId,
+      fetch: config.fetch,
+      now: config.now,
+    });
+    const firestore = new FirestoreRest({ projectId: config.projectId, account: session.email, tokens, fetch: config.fetch });
+    const channel = new StageChannel(config, firestore, tokens);
+    const clinic = await channel.readClinic();
+    channel.appName = clinic.appName;
+    channel.target = `${config.projectId} · ${clinic.name}`;
+    return channel;
+  }
 
-    try {
-      // Only the fields we need: the clinic document also holds integration credentials.
-      const snapshot = await db
-        .collection('organizations')
-        .where(FieldPath.documentId(), '==', config.orgId)
-        .select('name', 'settings.gupshup.appName')
-        .limit(1)
-        .get();
-      const doc = snapshot.docs[0];
-      if (!doc) {
-        throw new StepError(`The QA clinic «${config.orgId}» does not exist in ${config.projectId}.`);
-      }
-      const data = doc.data() as { name?: string; settings?: { gupshup?: { appName?: string } } };
-      const appName = data.settings?.gupshup?.appName;
-      if (!appName) {
-        throw new StepError(
-          `The QA clinic «${config.orgId}» has no Gupshup app configured, so the bot cannot receive messages.`
-        );
-      }
-      const target = `${config.projectId} · ${data.name ?? config.orgId}`;
-      return new StageChannel(config, app, db, appName, target);
-    } catch (error) {
-      await deleteApp(app).catch(() => undefined);
-      if (error instanceof StepError) throw error;
+  /** Reads only the QA clinic's name and Gupshup app: the clinic document also holds integration credentials. */
+  async readClinic(): Promise<{ name: string; appName: string }> {
+    const { orgId, projectId } = this.config;
+    const data = await this.firestore.getDocument(`organizations/${encodeURIComponent(orgId)}`, [
+      'name',
+      'settings.gupshup.appName',
+    ]);
+    if (!data) throw new StepError(`The QA clinic «${orgId}» does not exist in ${projectId}.`);
+    const settings = data.settings as { gupshup?: { appName?: unknown } } | undefined;
+    const appName = settings?.gupshup?.appName;
+    if (typeof appName !== 'string' || !appName) {
       throw new StepError(
-        `Could not read the QA clinic from ${config.projectId}: ${(error as Error).message}`
+        `The QA clinic «${orgId}» has no Gupshup app configured, so the bot cannot receive messages.`
       );
     }
+    return { name: typeof data.name === 'string' && data.name ? data.name : orgId, appName };
   }
 
-  async openSession(): Promise<ChannelSession> {
-    return new StageSession(this.config, this.db, this.appName);
+  /** A reason to stop the whole run (the Google sign-in expired or was removed), or undefined. */
+  fatal(): string | undefined {
+    if (this.tokens.expired()) return EXPIRED_MESSAGE;
+    if (this.config.isSignedIn && !this.config.isSignedIn()) return EXPIRED_MESSAGE;
+    return undefined;
   }
 
-  async dispose(): Promise<void> {
-    await deleteApp(this.app).catch(() => undefined);
+  async openSession(): Promise<StageSession> {
+    return new StageSession(this.config, this.firestore, this.appName);
   }
+
+  async dispose(): Promise<void> {}
 }
 
-class StageSession implements ChannelSession {
+const fieldFilter = (fieldPath: string, op: string, value: Record<string, unknown>) => ({
+  fieldFilter: { field: { fieldPath }, op, value },
+});
+
+export class StageSession implements ChannelSession {
   private readonly seen = new Set<string>();
   private conversation: string | undefined;
   private lastSentAt = 0;
+  private acceptedAt: number | undefined;
+
+  private readonly now: () => number;
 
   constructor(
     private readonly config: StageChannelConfig,
-    private readonly db: Firestore,
+    private readonly firestore: FirestoreRest,
     private readonly appName: string
-  ) {}
+  ) {
+    this.now = config.now ?? Date.now;
+  }
 
   async prepare(signal: AbortSignal): Promise<ChatMessage[]> {
     // Everything already in the conversation belongs to earlier tests: ignore it.
     const conversationId = await this.findConversationId();
     if (conversationId) {
-      const existing = await this.readMessages(conversationId, Date.now() - 24 * 60 * 60 * 1000);
+      const existing = await this.readMessages(conversationId, this.now() - 24 * 60 * 60 * 1000);
       existing.forEach((message) => this.seen.add(message.id));
     }
 
@@ -184,10 +185,10 @@ class StageSession implements ChannelSession {
       inbound
     );
 
-    this.lastSentAt = Date.now();
+    this.lastSentAt = this.now();
     let response: Response;
     try {
-      response = await fetch(this.config.webhookUrl, {
+      response = await (this.config.fetch ?? fetch)(this.config.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -200,10 +201,9 @@ class StageSession implements ChannelSession {
     const body = (await response.text()).trim();
     if (!response.ok || body !== 'ACK') {
       // The webhook answers 200 even when it fails internally; only "ACK" means it was accepted.
-      throw new StepError(
-        `The chatbot did not accept the message (HTTP ${response.status}: «${body.slice(0, 120)}»).`
-      );
+      throw new StepError(`The bot did not accept the message (HTTP ${response.status}: «${body.slice(0, 120)}»).`);
     }
+    this.acceptedAt = this.now();
 
     return {
       id: payload.payload.id,
@@ -244,6 +244,11 @@ class StageSession implements ChannelSession {
     return replies;
   }
 
+  /** When the webhook last answered "ACK" (ms), or undefined if no message was accepted yet. */
+  lastAcceptedAt(): number | undefined {
+    return this.acceptedAt;
+  }
+
   conversationId(): string | undefined {
     return this.conversation;
   }
@@ -252,29 +257,36 @@ class StageSession implements ChannelSession {
 
   /** Same query the chatbot uses (getMostRecentConversation), so the existing index serves it. */
   private async findConversationId(): Promise<string | undefined> {
-    const snapshot = await this.db
-      .collection('conversations')
-      .where('channelIdentifier.channelIdentifierUserId', '==', this.config.patientPhone)
-      .where('lastActivityMessageAt', '>=', new Date(Date.now() - SIX_MONTHS_MS))
-      .where('organizationId', '==', this.config.orgId)
-      .where('channel', '==', WHATSAPP_CHANNEL)
-      .orderBy('createdAt', 'desc')
-      .limit(1)
-      .select()
-      .get();
-    const id = snapshot.docs[0]?.id;
+    const docs = await this.firestore.runQuery('', {
+      from: [{ collectionId: 'conversations' }],
+      where: {
+        compositeFilter: {
+          op: 'AND',
+          filters: [
+            fieldFilter('channelIdentifier.channelIdentifierUserId', 'EQUAL', { stringValue: this.config.patientPhone }),
+            fieldFilter('lastActivityMessageAt', 'GREATER_THAN_OR_EQUAL', {
+              timestampValue: new Date(this.now() - SIX_MONTHS_MS).toISOString(),
+            }),
+            fieldFilter('organizationId', 'EQUAL', { stringValue: this.config.orgId }),
+            fieldFilter('channel', 'EQUAL', { stringValue: WHATSAPP_CHANNEL }),
+          ],
+        },
+      },
+      orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'DESCENDING' }],
+      limit: 1,
+      select: { fields: [{ fieldPath: '__name__' }] },
+    });
+    const id = docs[0]?.id;
     if (id) this.conversation = id;
     return id;
   }
 
   private async readMessages(conversationId: string, sinceMs: number): Promise<ChatMessage[]> {
-    const snapshot = await this.db
-      .collection('conversations')
-      .doc(conversationId)
-      .collection('messages')
-      .where('createdAt', '>=', new Date(sinceMs))
-      .orderBy('createdAt', 'asc')
-      .get();
-    return snapshot.docs.map((doc) => normalizeFirestoreMessage(doc.id, doc.data()));
+    const docs = await this.firestore.runQuery(`conversations/${encodeURIComponent(conversationId)}`, {
+      from: [{ collectionId: 'messages' }],
+      where: fieldFilter('createdAt', 'GREATER_THAN_OR_EQUAL', { timestampValue: new Date(sinceMs).toISOString() }),
+      orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'ASCENDING' }],
+    });
+    return docs.map((doc) => normalizeFirestoreMessage(doc.id, doc.data));
   }
 }

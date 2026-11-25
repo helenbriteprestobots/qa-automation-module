@@ -16,6 +16,9 @@ import { z } from 'zod';
 
 import type { AiFacade } from './ai.ts';
 import type { Store } from './db.ts';
+import type { GoogleSignIn } from './google/signIn.ts';
+import type { SessionStore } from './google/sessionStore.ts';
+import { type StageService, StageTestConflictError, StageTestFailedError } from './stage/stageService.ts';
 import { GenerationConflictError, GenerationInputError, type GenerationManager } from './generation/generationManager.ts';
 import { JiraError, JiraInputError, type JiraService } from './jira/service.ts';
 import { RunConflictError, RunInputError, type RunManager } from './runManager.ts';
@@ -28,6 +31,10 @@ export interface AppDeps {
   ai: AiFacade;
   jira: JiraService;
   generations: GenerationManager;
+  /** "Sign in with Google" for reading the real bot (stage mode). */
+  google?: { signIn: GoogleSignIn; sessions: SessionStore; onSignedOut?: () => void };
+  /** Connection checks and the test message for the real bot. */
+  stage?: StageService;
   /** Folder with the built web page, served in production. */
   webDist?: string;
   logger?: boolean;
@@ -41,6 +48,8 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     if (error instanceof RunConflictError || error instanceof GenerationConflictError) {
       return reply.code(409).send({ error: error.message });
     }
+    if (error instanceof StageTestConflictError) return reply.code(409).send({ error: error.message });
+    if (error instanceof StageTestFailedError) return reply.code(502).send({ error: error.message });
     if (error instanceof GenerationInputError) return reply.code(400).send({ error: error.message });
     if (error instanceof AiError || error instanceof BudgetExceededError) {
       return reply.code(400).send({ error: error.message });
@@ -61,6 +70,47 @@ export const buildApp = async (deps: AppDeps): Promise<FastifyInstance> => {
     ai: ai.status(),
     jira: jira.status(),
   }));
+
+  // ── Google sign-in (reads the real bot's replies) ──────────────────────────
+
+  const google = deps.google;
+  if (google) {
+    app.get('/api/google/sign-in', async (request, reply) => {
+      const { from } = z.object({ from: z.string().optional() }).parse(request.query);
+      return reply.redirect(google.signIn.start(from));
+    });
+
+    app.get('/api/google/callback', async (request, reply) => {
+      const query = z
+        .object({ code: z.string().optional(), state: z.string().optional(), error: z.string().optional() })
+        .parse(request.query);
+      const outcome = await google.signIn.finish(query);
+      const params = new URLSearchParams(
+        'reason' in outcome
+          ? { google: 'error', reason: outcome.reason, ...(outcome.email ? { email: outcome.email } : {}) }
+          : { google: 'signed-in' }
+      );
+      return reply.redirect(`${outcome.origin}/settings?${params.toString()}`);
+    });
+
+    app.post('/api/google/sign-out', async () => {
+      google.sessions.remove();
+      google.onSignedOut?.();
+      return { signedIn: false };
+    });
+  }
+
+  // ── Real bot (salud-stage) ─────────────────────────────────────────────────
+
+  const stage = deps.stage;
+  if (stage) {
+    app.get('/api/stage/checks', async (request) => {
+      const { fresh } = z.object({ fresh: z.string().optional() }).parse(request.query);
+      return stage.checks({ fresh: fresh === '1' });
+    });
+
+    app.post('/api/stage/test-message', async () => stage.sendTestMessage());
+  }
 
   // ── AI usage and budget ────────────────────────────────────────────────────
 

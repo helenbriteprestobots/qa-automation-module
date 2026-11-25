@@ -21,13 +21,14 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(4000),
   DATABASE_FILE: z.string().default('./data/platform.db'),
   STAGE_PROJECT_ID: z.string().default('salud-stage'),
-  STAGE_SERVICE_ACCOUNT_FILE: optional,
   STAGE_QA_ORG_ID: optional,
   STAGE_WEBHOOK_URL: optional,
   TEST_PATIENT_PHONE: optional,
   TEST_PATIENT_NAME: z.string().default('QA Paciente'),
   TEST_RESET_MESSAGE: optional,
   REPLY_TIMEOUT_SECONDS: z.coerce.number().positive().default(45),
+  GOOGLE_OAUTH_CLIENT_ID: optional,
+  GOOGLE_OAUTH_CLIENT_SECRET: optional,
   ANTHROPIC_API_KEY: optional,
   AI_MODEL_AUTHOR: z.string().default('claude-opus-5-5'),
   AI_MODEL_JUDGE: z.string().default('claude-haiku-5-5'),
@@ -49,6 +50,29 @@ if (!parsed.success) {
 
 const env = parsed.data;
 
+/**
+ * The public OAuth client of firebase-tools (the one `firebase login` and cauce-herramientas use).
+ * It ships inside those tools, so it is not a secret. Replaced by GOOGLE_OAUTH_CLIENT_ID/SECRET.
+ */
+export const FIREBASE_TOOLS_CLIENT = {
+  clientId: '563584335869-fgrhgmd47bqnekij5i8b5pr03ho849e6.apps.googleusercontent.com',
+  clientSecret: 'j9iVZfS8kkCEFUPaAeJV0sAi',
+};
+
+const filled = (value: string | undefined): string | undefined => (value && value.trim() !== '' ? value.trim() : undefined);
+
+/** Which Google sign-in client to use, and whether the old key-file setting is still in .env. */
+export const parseGoogleConfig = (
+  raw: Record<string, string | undefined>
+): { clientId: string; clientSecret: string; legacyKeyFileSet: boolean } => {
+  const clientId = filled(raw.GOOGLE_OAUTH_CLIENT_ID);
+  const clientSecret = filled(raw.GOOGLE_OAUTH_CLIENT_SECRET);
+  const own = clientId && clientSecret ? { clientId, clientSecret } : FIREBASE_TOOLS_CLIENT;
+  return { ...own, legacyKeyFileSet: Boolean(filled(raw.STAGE_SERVICE_ACCOUNT_FILE)) };
+};
+
+const google = parseGoogleConfig(process.env);
+
 export const config = {
   mode: env.CHATBOT_MODE,
   port: env.PORT,
@@ -57,15 +81,20 @@ export const config = {
   production: process.env.NODE_ENV === 'production',
   stage: {
     projectId: env.STAGE_PROJECT_ID,
-    serviceAccountFile: env.STAGE_SERVICE_ACCOUNT_FILE
-      ? resolve(APP_ROOT, env.STAGE_SERVICE_ACCOUNT_FILE)
-      : undefined,
     orgId: env.STAGE_QA_ORG_ID,
     webhookUrl: env.STAGE_WEBHOOK_URL,
     patientPhone: env.TEST_PATIENT_PHONE,
     patientName: env.TEST_PATIENT_NAME,
     resetMessage: env.TEST_RESET_MESSAGE,
     replyTimeoutMs: env.REPLY_TIMEOUT_SECONDS * 1000,
+  },
+  google: {
+    clientId: google.clientId,
+    clientSecret: google.clientSecret,
+    /** The admin's saved Google sign-in. Inside secrets/, which git ignores. */
+    sessionFile: resolve(APP_ROOT, 'secrets/google-session.json'),
+    /** STAGE_SERVICE_ACCOUNT_FILE is still set: it is no longer used (FR-8). */
+    legacyKeyFileSet: google.legacyKeyFileSet,
   },
   ai: {
     apiKey: env.ANTHROPIC_API_KEY,
@@ -86,15 +115,40 @@ export const config = {
 
 export type Config = typeof config;
 
-/** Plain-words list of settings missing for stage mode. Empty when complete. */
-export const missingStageSettings = (stage: Config['stage']): string[] => {
-  const missing: string[] = [];
-  if (!stage.serviceAccountFile) missing.push('STAGE_SERVICE_ACCOUNT_FILE (read-only key for salud-stage)');
-  else if (!existsSync(stage.serviceAccountFile)) {
-    missing.push(`The key file ${stage.serviceAccountFile} does not exist`);
+export interface StageSettingsProblem {
+  message: string;
+  fix: string;
+}
+
+/** What is missing or wrong in the stage settings of `.env`. Empty when complete. */
+export const stageSettingsProblems = (stage: {
+  orgId?: string;
+  webhookUrl?: string;
+  patientPhone?: string;
+}): StageSettingsProblem[] => {
+  const problems: StageSettingsProblem[] = [];
+  if (!stage.orgId) {
+    problems.push({
+      message: 'STAGE_QA_ORG_ID (the QA clinic) is not set in .env.',
+      fix: 'Add STAGE_QA_ORG_ID=testing-macena-gupshup-v3-qa to app/.env and restart the platform.',
+    });
   }
-  if (!stage.orgId) missing.push('STAGE_QA_ORG_ID (the QA clinic)');
-  if (!stage.webhookUrl) missing.push('STAGE_WEBHOOK_URL (the chatbot webhook address)');
-  if (!stage.patientPhone) missing.push('TEST_PATIENT_PHONE (the test patient phone number)');
-  return missing;
+  if (!stage.webhookUrl) {
+    problems.push({
+      message: 'STAGE_WEBHOOK_URL (the chatbot webhook address) is not set in .env.',
+      fix: 'Ask the developers for the webhookGupshupMessages address on salud-stage, add it to app/.env and restart.',
+    });
+  }
+  if (!stage.patientPhone) {
+    problems.push({
+      message: 'TEST_PATIENT_PHONE (the test patient phone number) is not set in .env.',
+      fix: 'Add the test phone to app/.env (digits only, with country code) and restart the platform.',
+    });
+  } else if (!/^\d{10,15}$/.test(stage.patientPhone)) {
+    problems.push({
+      message: `TEST_PATIENT_PHONE «${stage.patientPhone}» must be 10–15 digits, with country code and no + or spaces.`,
+      fix: 'Write it like 5492611234567 in app/.env and restart the platform.',
+    });
+  }
+  return problems;
 };

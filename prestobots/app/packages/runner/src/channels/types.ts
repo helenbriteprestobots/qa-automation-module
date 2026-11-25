@@ -35,6 +35,8 @@ export interface ChatChannel {
   /** Human description, e.g. "salud-stage · QA clinic". */
   readonly target: string;
   openSession(): Promise<ChannelSession>;
+  /** A reason to stop the whole run (e.g. the Google sign-in expired), checked after each test. */
+  fatal?(): string | undefined;
 }
 
 /**

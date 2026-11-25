@@ -1,14 +1,16 @@
-import { DemoChannel, STARTER_TEST_CASES, StageChannel } from '@ctp/runner';
-import type { PlatformStatus } from '@ctp/shared';
+import { DemoChannel, STARTER_TEST_CASES, SignInExpiredError, StageChannel } from '@ctp/runner';
 
 import { createAiFacade } from './ai.ts';
 import { buildApp } from './app.ts';
-import { config, missingStageSettings } from './config.ts';
+import { config, stageSettingsProblems } from './config.ts';
 import { Store } from './db.ts';
+import { SessionStore } from './google/sessionStore.ts';
+import { GoogleSignIn } from './google/signIn.ts';
 import { JiraClient, parseJiraSettings } from './jira/client.ts';
 import { GenerationManager } from './generation/generationManager.ts';
 import { createJiraService } from './jira/service.ts';
 import { type ChannelFactory, RunManager } from './runManager.ts';
+import { StageService, TEST_MESSAGE_BUSY } from './stage/stageService.ts';
 
 const store = new Store(config.databaseFile);
 
@@ -19,23 +21,54 @@ if (store.countTestCases() === 0) {
 
 const stage = config.stage;
 
-const channelFactory: ChannelFactory =
-  config.mode === 'demo'
-    ? async () => new DemoChannel()
-    : async () => {
-        const missing = missingStageSettings(stage);
-        if (missing.length > 0) throw new Error(`Missing settings: ${missing.join('; ')}`);
-        return StageChannel.create({
-          projectId: stage.projectId,
-          serviceAccountFile: stage.serviceAccountFile!,
-          orgId: stage.orgId!,
-          webhookUrl: stage.webhookUrl!,
-          patientPhone: stage.patientPhone!,
-          patientName: stage.patientName,
-          resetMessage: stage.resetMessage,
-          replyTimeoutMs: stage.replyTimeoutMs,
-        });
-      };
+const sessions = new SessionStore(config.google.sessionFile);
+
+/** A read-only connection to the real bot, signed in as the admin. */
+const createStageChannel = async (options: { resetMessage?: string } = {}): Promise<StageChannel> => {
+  const problems = stageSettingsProblems(stage);
+  if (problems.length > 0) throw new Error(problems.map((p) => p.message).join(' '));
+  try {
+    return await StageChannel.create({
+      projectId: stage.projectId,
+      google: { clientId: config.google.clientId, clientSecret: config.google.clientSecret, session: sessions.session() },
+      orgId: stage.orgId!,
+      webhookUrl: stage.webhookUrl!,
+      patientPhone: stage.patientPhone!,
+      patientName: stage.patientName,
+      resetMessage: options.resetMessage ?? stage.resetMessage,
+      replyTimeoutMs: stage.replyTimeoutMs,
+      isSignedIn: () => sessions.session() !== undefined,
+    });
+  } catch (error) {
+    if (error instanceof SignInExpiredError) stageService.invalidate();
+    throw error;
+  }
+};
+
+const stageService = new StageService({
+  mode: config.mode,
+  stage,
+  sessions,
+  legacyKeyFileSet: config.google.legacyKeyFileSet,
+  connect: createStageChannel,
+  busyElsewhere: () => {
+    const run = runs.activeRunId();
+    if (run) return `Run #${run} is using the chatbot. Wait for it to finish or cancel it.`;
+    const generation = generations.activeId();
+    return generation ? `"Generate test cases" (#${generation}) is using the chatbot. Wait for it to finish or cancel it.` : null;
+  },
+});
+
+const googleSignIn = new GoogleSignIn({
+  clientId: config.google.clientId,
+  clientSecret: config.google.clientSecret,
+  port: config.port,
+  projectId: stage.projectId,
+  sessions,
+  onSignedIn: () => stageService.invalidate(),
+});
+
+const channelFactory: ChannelFactory = config.mode === 'demo' ? async () => new DemoChannel() : () => createStageChannel();
 
 const defaultTarget =
   config.mode === 'demo'
@@ -73,55 +106,21 @@ const generations = new GenerationManager(store, channelFactory, config.mode, ai
 });
 generations.recoverInterrupted();
 runs.setBlocker(() => {
+  if (stageService.busy()) return TEST_MESSAGE_BUSY;
   const active = generations.activeId();
   return active ? `"Generate test cases" (#${active}) is using the chatbot. Wait for it to finish or cancel it.` : null;
 });
-
-/** Checks the connection to salud-stage at most once a minute. */
-type BaseStatus = Omit<PlatformStatus, 'activeRunId' | 'activeGenerationId' | 'ai' | 'jira'>;
-let stageCheck: { at: number; status: BaseStatus } | null = null;
-
-const status = async (): Promise<BaseStatus> => {
-  if (config.mode === 'demo') {
-    return {
-      mode: 'demo',
-      target: defaultTarget,
-      ready: true,
-      problems: [],
-      notes: ['Demo mode: tests talk to a simulated bot. Set CHATBOT_MODE=stage in .env to test the real chatbot.'],
-    };
-  }
-
-  if (stageCheck && Date.now() - stageCheck.at < 60_000) return stageCheck.status;
-
-  const notes: string[] = [];
-  if (!stage.resetMessage) {
-    notes.push('No reset message is set: each test continues the test patient\'s existing conversation.');
-  }
-  const missing = missingStageSettings(stage);
-  let result: BaseStatus;
-  if (missing.length > 0) {
-    result = { mode: 'stage', target: defaultTarget, ready: false, problems: missing.map((m) => `Missing: ${m}`), notes };
-  } else {
-    try {
-      const channel = await channelFactory();
-      await channel.dispose?.();
-      result = { mode: 'stage', target: channel.target, ready: true, problems: [], notes };
-    } catch (error) {
-      result = { mode: 'stage', target: defaultTarget, ready: false, problems: [(error as Error).message], notes };
-    }
-  }
-  stageCheck = { at: Date.now(), status: result };
-  return result;
-};
+generations.setBlocker(() => (stageService.busy() ? TEST_MESSAGE_BUSY : null));
 
 const app = await buildApp({
   store,
   runs,
-  status,
+  status: () => stageService.status(),
   ai,
   jira,
   generations,
+  google: { signIn: googleSignIn, sessions, onSignedOut: () => stageService.invalidate() },
+  stage: stageService,
   webDist: config.production ? config.webDist : undefined,
   logger: false,
 });
