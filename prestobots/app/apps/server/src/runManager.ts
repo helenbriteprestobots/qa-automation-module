@@ -202,9 +202,15 @@ export class RunManager {
     }
 
     try {
+      let stopReason: string | undefined;
       for (const [position, testCase] of testCases.entries()) {
         if (signal.aborted) {
           this.saveResult(this.blankResult(run.id, testCase, position, 'skipped'), position);
+          continue;
+        }
+        if (stopReason) {
+          // The chatbot can't be used any more (e.g. the Google sign-in expired): skip the rest.
+          this.saveResult({ ...this.blankResult(run.id, testCase, position, 'skipped'), error: stopReason }, position);
           continue;
         }
         const result = await executeTestCase({
@@ -218,6 +224,7 @@ export class RunManager {
         });
         this.saveResult(result, position);
         run = this.updateRun(run, {});
+        stopReason = channel.fatal?.();
       }
     } finally {
       await channel.dispose?.().catch(() => undefined);

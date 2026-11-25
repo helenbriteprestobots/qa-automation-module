@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type FormEvent, useEffect, useState } from 'react';
 
 import { api } from '../api';
+import { RealBotCard } from '../components/RealBotCard';
 import { Button, Card, ErrorBox, Loading, PageTitle } from '../components/ui';
 import { formatUsd } from '../format';
 
@@ -45,10 +46,12 @@ export const SettingsPage = () => {
 
   return (
     <>
-      <PageTitle title="Settings" subtitle="AI, its monthly budget, and Jira." />
+      <PageTitle title="Settings" subtitle="The real bot, AI, its monthly budget, and Jira." />
       <ErrorBox error={save.error} />
 
       <div className="grid gap-6 lg:grid-cols-2">
+        <RealBotCard demo={platform.data?.mode !== 'stage'} />
+
         <Card className="p-5">
           <h2 className="font-semibold">AI</h2>
           {status.enabled ? (

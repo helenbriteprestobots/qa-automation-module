@@ -13,25 +13,37 @@ export class GuardError extends Error {
   }
 }
 
-export interface GuardInput {
+/** The Google domain of the accounts allowed to read salud-stage. */
+export const ALLOWED_ACCOUNT_DOMAIN = 'prestobots.com';
+
+export interface SafeTargetInput {
   projectId: string;
-  /** project_id inside the service-account JSON. */
-  credentialsProjectId: string | undefined;
   webhookUrl: string;
   orgId: string;
 }
 
-export const assertSafeTarget = (input: GuardInput): void => {
-  const { projectId, credentialsProjectId, webhookUrl, orgId } = input;
+/** The admin must be signed in with Google, with a prestobots.com account. */
+export const assertSafeAccount = (email: string | undefined): void => {
+  if (!email) {
+    throw new GuardError('Not signed in. Sign in with Google in Settings to use the real bot.');
+  }
+  if (!email.toLowerCase().endsWith(`@${ALLOWED_ACCOUNT_DOMAIN}`)) {
+    throw new GuardError(`Sign in with your ${ALLOWED_ACCOUNT_DOMAIN} account (you used ${email}).`);
+  }
+};
+
+/** Every rule, before any read from Firestore or message to the webhook: account first, then target. */
+export const assertStageAccess = (target: SafeTargetInput, email: string | undefined): void => {
+  assertSafeAccount(email);
+  assertSafeTarget(target);
+};
+
+export const assertSafeTarget = (input: SafeTargetInput): void => {
+  const { projectId, webhookUrl, orgId } = input;
 
   if (!(ALLOWED_PROJECTS as readonly string[]).includes(projectId)) {
     throw new GuardError(
       `Project «${projectId}» is not allowed. The platform only runs against: ${ALLOWED_PROJECTS.join(', ')}.`
-    );
-  }
-  if (credentialsProjectId !== projectId) {
-    throw new GuardError(
-      `The service-account key belongs to «${credentialsProjectId ?? 'unknown'}», not to «${projectId}».`
     );
   }
 

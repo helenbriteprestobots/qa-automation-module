@@ -8,6 +8,8 @@ import type {
   JiraCardInput,
   JiraIssueType,
   PlatformStatus,
+  StageChecks,
+  TestMessageResult,
   ResultStatus,
   Run,
   TestCase,
@@ -66,6 +68,9 @@ export const api = {
     request<Run>('/api/runs', { method: 'POST', body }),
   cancelRun: (id: string) => request<{ ok: true }>(`/api/runs/${id}/cancel`, { method: 'POST', body: {} }),
   aiUsage: () => request<{ status: AiStatus; breakdown: AiUsageBreakdown }>('/api/ai/usage'),
+  stageChecks: (fresh = false) => request<StageChecks>(`/api/stage/checks${fresh ? '?fresh=1' : ''}`),
+  signOut: () => request<{ signedIn: false }>('/api/google/sign-out', { method: 'POST' }),
+  sendTestMessage: () => request<TestMessageResult>('/api/stage/test-message', { method: 'POST' }),
   setBudget: (limitUsd: number) => request<AiStatus>('/api/ai/budget', { method: 'PUT', body: { limitUsd } }),
   draftTestCase: (body: { request: string; currentId?: string; draft?: TestCaseDraft }) =>
     request<TestCaseDraft>('/api/test-cases/draft', { method: 'POST', body }),

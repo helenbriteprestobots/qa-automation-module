@@ -1,5 +1,6 @@
 export * from './chat.ts';
 export * from './generation.ts';
+export * from './google.ts';
 export * from './jira.ts';
 export * from './run.ts';
 export * from './testCase.ts';

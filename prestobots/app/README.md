@@ -40,9 +40,27 @@ For development with hot reload: `npx pnpm@10.10.0 dev`, then open http://localh
 | `CHATBOT_MODE` | Talks to | Needs |
 | --- | --- | --- |
 | `demo` (default) | A simulated bot inside the platform. Lets you try everything today. | Nothing |
-| `stage` | The real Cauce chatbot on **salud-stage**, in the QA clinic | Every value in the stage block of `.env` (see `docs/07-developer-requests.md`) |
+| `stage` | The real Cauce chatbot on **salud-stage**, in the QA clinic | The stage block of `.env`, and signing in with your prestobots.com Google account in Settings |
 
 In demo mode, `SAL-CANCEL-002` fails **on purpose** so you can see what a failure looks like.
+
+### Setting up stage mode
+
+1. Ask Pachi for a **prestobots.com Google account** with **read access (Cloud Datastore Viewer) on
+   salud-stage**. It is the same access cauce-herramientas uses, but on salud-stage instead of salud-prod.
+2. In `app/.env`: `CHATBOT_MODE=stage`, the QA clinic (`STAGE_QA_ORG_ID`), the webhook address
+   (`STAGE_WEBHOOK_URL`) and the test phone (`TEST_PATIENT_PHONE`, digits only with country code).
+   Restart the platform.
+3. Open **Settings → Real bot (salud-stage)** and click **Sign in with Google**. Choose your
+   prestobots.com account. Google asks for access to your Google Cloud data: the platform only reads,
+   because your account can only read.
+4. The card shows six checks (settings, safe target, signed in, prestobots.com account, can read
+   salud-stage, QA clinic found). Each failed check says what to do. **Check again** runs them now.
+5. **Send test hola** sends one message as the test patient and shows the bot's reply and how long it took.
+
+No key file is needed (`STAGE_SERVICE_ACCOUNT_FILE` is no longer used). The sign-in is saved in
+`secrets/google-session.json`, which only you can read and which is never sent to the web page or to
+Jira. **Sign out** deletes it. If the sign-in expires, the checks and runs say so: sign in again.
 
 The starter test cases follow the demo bot's menu. Against the real chatbot some option names will
 be different. The first stage run will show which ones need adjusting.
@@ -117,14 +135,15 @@ from Jira and creates nothing.
 ```
 the runner ──fake WhatsApp message (Gupshup format)──▶ webhookGupshupMessages (salud-stage)
      ▲                                                          │
-     └──── reads the bot's replies (read-only) ◀── Firestore conversations/{id}/messages
+     └──── reads the bot's replies (read-only, as you) ◀── Firestore conversations/{id}/messages
 ```
 
 - The chatbot finds the clinic by the Gupshup app name inside the message. The platform reads that
   name from the QA clinic, so you only configure the clinic id.
 - Safety:
   - only `salud-stage` is allowed;
-  - the key file must belong to salud-stage;
+  - you must be signed in with a prestobots.com Google account;
+  - Google requests only go to Google's sign-in addresses and salud-stage's Firestore data;
   - the webhook must be a Google Cloud address of that project;
   - anything that looks like production is refused.
 - Every fake message id starts with `qa-`, so developers can spot test traffic in the logs.

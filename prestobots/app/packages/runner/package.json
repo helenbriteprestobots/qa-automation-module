@@ -11,8 +11,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ctp/shared": "workspace:*",
-    "firebase-admin": "^12.7.0"
+    "@ctp/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
