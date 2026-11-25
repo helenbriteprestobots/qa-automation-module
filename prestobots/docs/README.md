@@ -6,9 +6,6 @@ the code, these docs follow **the code** and flag the drift.
 
 | Doc | Repo | What it is |
 | --- | --- | --- |
-| [01-cauce-webpage.md](01-cauce-webpage.md) | `repos/cauce-webpage-main/` | Marketing landing page for **Cauce** (the PrestoBots health vertical). Next.js 16 on Cloudflare Workers. |
-| [02-prestobots-master.md](02-prestobots-master.md) | `repos/prestobots-master/` | **Legacy platform (v1).** Firebase Functions v1 (JS/Babel) + CRA admin panel + CRA webchat, Dialogflow ES. |
-| [03-prestobotsv3.md](03-prestobotsv3.md) | `repos/prestobotsv3-main/` | **Current platform** (internally still called `prestobotsv2`). pnpm/Turbo monorepo, Functions v2 (TS), two products: **Salud/Cauce** and **Turnos**. |
 | [04-e2e-testing-strategy.md](04-e2e-testing-strategy.md) | all | How to automate agentic E2E testing across the three repos, with the platform, architecture and rollout plan. |
 | [05-chatbot-testing-simple.md](05-chatbot-testing-simple.md) | chatbot (v3 Salud) | Plain-language version of the chatbot testing plan for non-technical readers: dictionary, how tests adapt to changes, automatic test-case discovery and IDs, the admin role. |
 | [06-mvp-scope.md](06-mvp-scope.md) | chatbot (v3 Salud) | **MVP scope** of the Chatbot Testing Platform: create test cases (AI + natural language), run them from the web page, detailed reports, Jira cards. Out of scope, done-criteria, open questions. |
